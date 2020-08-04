@@ -1,7 +1,7 @@
 # SSPR
 Try Screen Space Planar Reflections in unity
 
-![image](http://github.com/riceWithoutIce/SSPR/raw/master/IMG/SSPR.jpg)
+![image](https://github.com/riceWithoutIce/SSPR/blob/master/IMG/SSPR.jpg)
 
 Still have some bugs.
 
