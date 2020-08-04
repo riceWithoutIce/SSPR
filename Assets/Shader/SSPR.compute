@@ -1,0 +1,115 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel SSPR_Clear
+#pragma kernel SSPR_Hash
+#pragma kernel SSPR_Hash_Resolve
+#include "UnityCG.cginc"
+
+// size
+uint2 _Size;
+
+//-----------------------------------------------------------------
+// clear
+RWTexture2D<uint> _HashClearTex;
+[numthreads(32, 32, 1)]
+void SSPR_Clear (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Size.x || id.y >= _Size.y)
+    return;
+
+    // Clear Result
+    #if UNITY_UV_STARTS_AT_TOP
+        _HashClearTex[id.xy] = 0xFFFFFFFF; // if the y is inverted we will want the smallest value not biggest
+    #else
+        _HashClearTex[id.xy] = 0;
+    #endif
+}
+
+//-----------------------------------------------------------------
+// hash
+Texture2D<float> _CameraDepthTexture;
+RWTexture2D<uint> _HashResult;
+
+float4x4 _IVP;
+float4x4 _VP;
+
+float4 _ReflectData;
+
+[numthreads(32, 32, 1)]
+void SSPR_Hash (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Size.x || id.y >= _Size.y)
+        return;
+
+    float2 iSize = float2(1.0 / _Size.x, 1.0 / _Size.y);
+    float2 uv = id.xy * iSize + iSize * 0.5f;
+
+    #if UNITY_UV_STARTS_AT_TOP
+        uv.y = 1.0 - uv.y;
+    #endif
+
+    float depth = _CameraDepthTexture.Load(int3(id.x, id.y, 0));
+
+    float4 positionCS = float4(uv * 2.0 - 1.0, depth, 1.0);
+	float4 hpositionWS = mul(_IVP, positionCS);
+	float3 wpos = hpositionWS.xyz / hpositionWS.w;
+
+    float dis = dot(wpos, _ReflectData.xyz) + _ReflectData.w;
+    if (dis < 0.001)
+        return;
+
+    float3 ref_wpos = wpos - (_ReflectData.xyz * (dis * 2));
+    // float3 ref_wpos = float3(wpos.x, -wpos.y, wpos.z);
+    float4 ref_cpos = mul(_VP, float4(ref_wpos, 1.0f));
+    float2 ref_uv = ref_cpos.xy / ref_cpos.w;
+    ref_uv = ref_uv * 0.5 + 0.5;
+
+    if (ref_uv.x >= 0 && ref_uv.y >= 0 && ref_uv.x <= 1.0f && ref_uv.y <= 1.0)
+    {
+        #if UNITY_UV_STARTS_AT_TOP
+            ref_uv.y = 1.0 - ref_uv.y;
+        #endif
+
+        uint2 location = uint2(ref_uv.x * _Size.x, ref_uv.y * _Size.y);
+        uint hash = (id.y << 16) | (id.x);
+        int dontCare = 0;
+
+        // _HashResult[location] = hash;
+
+        #if UNITY_UV_STARTS_AT_TOP
+            InterlockedMin(_HashResult[location], hash, dontCare);
+        #else
+            InterlockedMax(_HashResult[location], hash, dontCare);
+        #endif
+    }
+}
+
+//-----------------------------------------------------------------
+// hash resolve
+Texture2D<uint> _HashTex;
+Texture2D<float4> _ColorTex;
+RWTexture2D<float4> _RefTex;
+
+[numthreads(32, 32, 1)]
+void SSPR_Hash_Resolve (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Size.x || id.y >= _Size.y)
+    return;
+
+    uint hash = _HashTex[id.xy].x;
+
+    #if UNITY_UV_STARTS_AT_TOP
+        if (hash == 0xFFFFFFFF)
+        {
+    #else
+        if (hash == 0)
+        {
+    #endif
+            // _RefTex[id.xy] = 0;
+            return;
+        }
+
+    uint x = hash & 0xFFFF;
+    uint y = hash >> 16;
+
+    _RefTex[id.xy] = _ColorTex[uint2(x, y)];
+}
